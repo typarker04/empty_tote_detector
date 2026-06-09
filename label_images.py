@@ -51,7 +51,8 @@ def main():
     csv_path = Path(args.labels_csv)
 
     all_images = sorted(
-        p for p in images_dir.iterdir() if p.suffix.lower() in IMAGE_EXTS
+        p for p in images_dir.iterdir()
+        if p.suffix.lower() in IMAGE_EXTS and not p.name.endswith("_depth.png")
     )
     if not all_images:
         print(f"No images found in {images_dir}")
@@ -105,23 +106,28 @@ def main():
 
         filename = unlabeled[idx].name
 
+        def apply_label(label):
+            nonlocal idx
+            labels[filename] = label
+            depth_name = filename.replace("_rgb.png", "_depth.png")
+            if (images_dir / depth_name).exists():
+                labels[depth_name] = label
+            history.append(filename)
+            idx += 1
+            show_image(idx)
+
         if event.key == "e":
-            labels[filename] = "empty"
-            history.append((filename, "empty"))
-            idx += 1
-            show_image(idx)
+            apply_label("empty")
         elif event.key == "n":
-            labels[filename] = "not_empty"
-            history.append((filename, "not_empty"))
-            idx += 1
-            show_image(idx)
+            apply_label("not_empty")
         elif event.key == "s":
             idx += 1
             show_image(idx)
         elif event.key == "u" and history:
-            removed_name, _ = history.pop()
+            removed_name = history.pop()
             del labels[removed_name]
-            # find the index of the undone image in unlabeled
+            depth_name = removed_name.replace("_rgb.png", "_depth.png")
+            labels.pop(depth_name, None)
             for j, p in enumerate(unlabeled):
                 if p.name == removed_name:
                     idx = j

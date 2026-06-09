@@ -1,0 +1,102 @@
+"""
+Run the trained SKU homogeneity classifier on a folder of images.
+
+Usage:
+    # Print predictions CSV to stdout
+    python run_sku_classifier.py --model sku_classifier_best.pth --images_dir /path/to/images
+
+    # Save CSV to a file
+    python run_sku_classifier.py --model sku_classifier_best.pth \
+        --images_dir /path/to/images --output_csv predictions.csv
+
+    # Move homogeneous images to a subfolder
+    python run_sku_classifier.py --model sku_classifier_best.pth \
+        --images_dir /path/to/images --move_homogeneous /path/to/homogeneous_output
+
+    # Only flag images with confidence above a threshold
+    python run_sku_classifier.py ... --threshold 0.9
+"""
+
+import argparse
+import csv
+import shutil
+import sys
+from pathlib import Path
+
+import torch
+
+from classifier_core import load_model, predict_batch, make_transform, IMAGE_EXTS
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", required=True, help="Path to .pth checkpoint")
+    parser.add_argument("--images_dir", required=True)
+    parser.add_argument("--output_csv", default=None, help="Save predictions CSV here")
+    parser.add_argument("--move_homogeneous", default=None,
+                        help="If set, move predicted-homogeneous images to this directory")
+    parser.add_argument("--threshold", type=float, default=0.5,
+                        help="Confidence threshold for 'homogeneous' prediction")
+    parser.add_argument("--batch_size", type=int, default=64)
+    args = parser.parse_args()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model, img_size, label_map, task = load_model(args.model, device)
+
+    if task and task != "sku_homogeneity":
+        print(f"Warning: checkpoint task is '{task}', expected 'sku_homogeneity'", file=sys.stderr)
+
+    transform = make_transform(img_size, augment=False)
+    idx_to_label = {v: k for k, v in label_map.items()}
+    homo_idx = label_map["homogeneous"]
+
+    images_dir = Path(args.images_dir)
+    paths = sorted(p for p in images_dir.iterdir() if p.suffix.lower() in IMAGE_EXTS)
+    if not paths:
+        print(f"No images found in {images_dir}")
+        sys.exit(1)
+
+    print(f"Running on {len(paths)} images...", file=sys.stderr)
+    probs_list = predict_batch(model, paths, transform, device, args.batch_size)
+
+    rows = []
+    for path, probs in zip(paths, probs_list):
+        if probs is None:
+            rows.append({"filename": path.name, "prediction": "error", "homogeneous_prob": ""})
+            continue
+        homo_prob = probs[homo_idx].item()
+        predicted = "homogeneous" if homo_prob >= args.threshold else "heterogeneous"
+        rows.append({
+            "filename": path.name,
+            "prediction": predicted,
+            "homogeneous_prob": f"{homo_prob:.4f}",
+        })
+
+    csv_out = args.output_csv or "sku_predictions.csv"
+    with open(csv_out, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["filename", "prediction", "homogeneous_prob"])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    n_homo = sum(1 for r in rows if r["prediction"] == "homogeneous")
+    print(f"Results: {n_homo}/{len(rows)} predicted homogeneous  (threshold={args.threshold})")
+    print(f"Saved to {csv_out}")
+
+    if args.move_homogeneous:
+        dest = Path(args.move_homogeneous)
+        dest.mkdir(parents=True, exist_ok=True)
+        moved = 0
+        for row in rows:
+            if row["prediction"] == "homogeneous":
+                rgb_name = row["filename"]
+                depth_name = rgb_name.replace("_rgb.png", "_depth.png")
+                shutil.move(str(images_dir / rgb_name), dest / rgb_name)
+                depth_src = images_dir / depth_name
+                if depth_src.exists():
+                    shutil.move(str(depth_src), dest / depth_name)
+                moved += 1
+        print(f"Moved {moved} homogeneous-tote image pairs to {dest}")
+
+
+if __name__ == "__main__":
+    main()

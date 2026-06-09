@@ -4,6 +4,14 @@ Interactive image labeler for tote classifier.
 Usage:
     python label_images.py --images_dir /path/to/images [--labels_csv labels.csv]
 
+    # Show model predictions alongside images to speed up labeling
+    python label_images.py --images_dir images/input/ \
+        --filter_csv data/input_predictions.csv
+
+    # Also auto-label images the model is highly confident about
+    python label_images.py --images_dir images/input/ \
+        --filter_csv data/input_predictions.csv --skip_threshold 0.95
+
 Keys:
     e  — empty tote
     n  — not empty (occupied)
@@ -14,7 +22,6 @@ Keys:
 
 import argparse
 import csv
-import os
 import sys
 from pathlib import Path
 
@@ -41,14 +48,39 @@ def save_labels(csv_path: Path, labels: dict):
             writer.writerow({"filename": filename, "label": label})
 
 
+def load_predictions(filter_csv: Path) -> dict:
+    """Return filename -> (prediction, empty_prob) from a run_classifier.py CSV."""
+    preds = {}
+    with open(filter_csv) as f:
+        for row in csv.DictReader(f):
+            preds[row["filename"]] = (row.get("prediction", ""), row.get("empty_prob", ""))
+    return preds
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--images_dir", required=True)
     parser.add_argument("--labels_csv", default="labels.csv")
+    parser.add_argument(
+        "--filter_csv", default=None,
+        help="Predictions CSV from run_classifier.py — shows model prediction in title",
+    )
+    parser.add_argument(
+        "--skip_threshold", type=float, default=None,
+        help="Auto-label and skip images where model confidence >= this value (e.g. 0.95)",
+    )
     args = parser.parse_args()
 
     images_dir = Path(args.images_dir)
     csv_path = Path(args.labels_csv)
+
+    predictions = {}
+    if args.filter_csv:
+        filter_path = Path(args.filter_csv)
+        if not filter_path.exists():
+            print(f"filter_csv not found: {filter_path}")
+            sys.exit(1)
+        predictions = load_predictions(filter_path)
 
     all_images = sorted(
         p for p in images_dir.iterdir()
@@ -59,6 +91,31 @@ def main():
         sys.exit(1)
 
     labels = load_existing_labels(csv_path)
+
+    # Auto-label high-confidence predictions before opening the UI
+    if predictions and args.skip_threshold is not None:
+        auto = 0
+        for p in all_images:
+            if p.name in labels:
+                continue
+            pred, prob_str = predictions.get(p.name, ("", ""))
+            if pred in ("empty", "not_empty") and prob_str:
+                try:
+                    prob = float(prob_str)
+                except ValueError:
+                    continue
+                # prob is empty_prob; confidence = max(prob, 1-prob)
+                confidence = prob if pred == "empty" else 1.0 - prob
+                if confidence >= args.skip_threshold:
+                    labels[p.name] = pred
+                    depth_name = p.name.replace("_rgb.png", "_depth.png")
+                    if (images_dir / depth_name).exists():
+                        labels[depth_name] = pred
+                    auto += 1
+        if auto:
+            print(f"Auto-labeled {auto} images with confidence >= {args.skip_threshold}")
+            save_labels(csv_path, labels)
+
     unlabeled = [p for p in all_images if p.name not in labels]
 
     print(f"Total images: {len(all_images)}")
@@ -89,8 +146,15 @@ def main():
         ax.imshow(img)
         ax.axis("off")
         progress = f"{i + 1}/{len(unlabeled)} remaining  |  total labeled: {len(labels)}"
-        ax.set_title(f"{img_path.name}\n{progress}\n[e]=empty  [n]=not empty  [s]=skip  [u]=undo  [q]=quit",
-                     fontsize=10)
+        pred_info = ""
+        if img_path.name in predictions:
+            pred, prob = predictions[img_path.name]
+            pred_info = f"  |  model: {pred}  (empty_prob={prob})"
+        ax.set_title(
+            f"{img_path.name}\n{progress}{pred_info}\n"
+            "[e]=empty  [n]=not empty  [s]=skip  [u]=undo  [q]=quit",
+            fontsize=10,
+        )
         fig.canvas.draw()
 
     def on_key(event):

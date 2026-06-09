@@ -31,13 +31,15 @@ class ToteDataset(Dataset):
 
 
 def load_samples(images_dir: Path, csv_path: Path, label_map: dict):
+    # Index all images recursively so training works across subdirectories
+    file_index = {p.name: p for p in images_dir.rglob("*") if p.suffix.lower() in IMAGE_EXTS}
     samples = []
     with open(csv_path) as f:
         for row in csv.DictReader(f):
             if row["label"] not in label_map:
                 continue
-            img_path = images_dir / row["filename"]
-            if img_path.exists():
+            img_path = file_index.get(row["filename"])
+            if img_path:
                 samples.append((img_path, label_map[row["label"]]))
     return samples
 

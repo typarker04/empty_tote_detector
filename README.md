@@ -1,20 +1,61 @@
 # Tote Classifier
 
-Binary image classifier (empty vs. not-empty tote) based on fine-tuned EfficientNet-B0.
+Two EfficientNet-B0 classifiers for tote inspection:
 
-## Workflow
+- **Empty/not-empty** — is the tote occupied?
+- **SKU homogeneity** — does the tote contain one SKU type (homogeneous) or multiple (heterogeneous)?
 
-1. **Label** images with `label_images.py`
-2. **Train** a model with `train_classifier.py`
-3. **Run** inference with `run_classifier.py`
+## Image Folder Structure
 
-## Labeling
-
-```bash
-python label_images.py --images_dir /path/to/images --labels_csv data/labels.csv
+```
+images/
+├── empty/      # labeled empty RGB/depth pairs
+├── not_empty/  # labeled not-empty RGB/depth pairs
+└── input/      # drop new data here to be labeled
 ```
 
-A matplotlib window opens showing each image. Keyboard controls:
+Depth images (`*_depth.png`) are never shown in the labeler — they are automatically paired with their RGB counterpart and given the same label.
+
+Training scripts search `images/` recursively, so point `--images_dir` at the `images/` parent regardless of which subfolder images live in.
+
+---
+
+## Empty / Not-Empty Classifier
+
+### 1. Score unseen data
+
+```bash
+python run_classifier.py \
+    --model models/tote_classifier_best.pth \
+    --images_dir images/input/ \
+    --output_csv data/input_predictions.csv
+```
+
+Output CSV columns: `filename`, `prediction` (`empty`/`not_empty`), `empty_prob`.
+
+### 2. Label
+
+```bash
+# Basic — shows each image one by one
+python label_images.py \
+    --images_dir images/input/ \
+    --labels_csv data/labels.csv
+
+# With model predictions shown in the title
+python label_images.py \
+    --images_dir images/input/ \
+    --filter_csv data/input_predictions.csv \
+    --labels_csv data/labels.csv
+
+# Auto-label high-confidence predictions, review only uncertain ones
+python label_images.py \
+    --images_dir images/input/ \
+    --filter_csv data/input_predictions.csv \
+    --skip_threshold 0.95 \
+    --labels_csv data/labels.csv
+```
+
+Keyboard controls:
 
 | Key | Action |
 |-----|--------|
@@ -28,18 +69,14 @@ Labels autosave every 20 images. Already-labeled images are skipped on subsequen
 
 ![Tote Labeler](Tote_Labeler.png)
 
-## Training
+### 3. Train
 
 ```bash
 python train_classifier.py \
-    --images_dir /path/to/images \
+    --images_dir images/ \
     --labels_csv data/labels.csv \
     --output models/tote_classifier_best.pth
 ```
-
-The best checkpoint (by validation accuracy) is saved automatically. Class imbalance is handled via weighted random sampling.
-
-Key options:
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -49,29 +86,85 @@ Key options:
 | `--val_split` | 0.2 | Fraction held out for validation |
 | `--freeze_backbone` | off | Train head only — faster, needs less data |
 
-## Inference
+---
+
+## SKU Homogeneity Classifier
+
+Classifies non-empty totes as **homogeneous** (all items same SKU) or **heterogeneous** (multiple SKU types).
+
+### 1. Pre-filter with the empty/not-empty classifier
 
 ```bash
-# Print predictions CSV to stdout
 python run_classifier.py \
     --model models/tote_classifier_best.pth \
-    --images_dir /path/to/images
-
-# Save CSV to a file
-python run_classifier.py --model models/tote_classifier_best.pth \
-    --images_dir /path/to/images --output_csv predictions.csv
-
-# Move predicted-empty images (and paired *_depth.png files) to another folder
-python run_classifier.py --model models/tote_classifier_best.pth \
-    --images_dir /path/to/images --move_empty /path/to/empty_output
-
-# Raise the confidence threshold (default 0.5)
-python run_classifier.py ... --threshold 0.9
+    --images_dir images/input/ \
+    --output_csv data/empty_predictions.csv
 ```
 
-Output CSV columns: `filename`, `prediction` (`empty`/`not_empty`), `empty_prob`.
+### 2. Label (only non-empty images are shown)
 
-The `--move_empty` flag moves both `*_rgb.png` and the paired `*_depth.png` when present, making it easy to cull empty-tote frames from RGB-D datasets.
+```bash
+python label_sku.py \
+    --images_dir images/input/ \
+    --filter_csv data/empty_predictions.csv \
+    --labels_csv data/sku_labels.csv
+```
+
+Keyboard controls:
+
+| Key | Action |
+|-----|--------|
+| `h` | homogeneous |
+| `x` | heterogeneous |
+| `s` | skip |
+| `u` | undo last label |
+| `q` | quit and save |
+
+### 3. Train
+
+```bash
+# Quick baseline — frozen backbone
+python train_sku_classifier.py \
+    --images_dir images/ \
+    --labels_csv data/sku_labels.csv \
+    --freeze_backbone
+
+# Full fine-tune
+python train_sku_classifier.py \
+    --images_dir images/ \
+    --labels_csv data/sku_labels.csv \
+    --output models/sku_classifier_best.pth \
+    --epochs 30
+```
+
+### 4. Inference
+
+```bash
+python run_sku_classifier.py \
+    --model models/sku_classifier_best.pth \
+    --images_dir images/input/ \
+    --output_csv data/sku_predictions.csv
+```
+
+Output CSV columns: `filename`, `prediction` (`homogeneous`/`heterogeneous`), `homogeneous_prob`.
+
+---
+
+## Two-Stage Pipeline
+
+Runs both classifiers in sequence and outputs a single merged CSV.
+
+```bash
+python run_sku_pipeline.py \
+    --empty_model models/tote_classifier_best.pth \
+    --sku_model models/sku_classifier_best.pth \
+    --images_dir images/input/ \
+    --output_csv data/pipeline_predictions.csv
+```
+
+Output CSV columns: `filename`, `stage1_prediction`, `stage2_prediction` (`homogeneous`/`heterogeneous`/`n_a`), `empty_prob`, `homogeneous_prob`. Empty totes get `stage2_prediction=n_a`.
+
+---
 
 ## Dependencies
 

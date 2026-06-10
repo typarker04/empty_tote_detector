@@ -5,8 +5,8 @@ Usage:
     # Print predictions CSV to stdout
     python run_classifier.py --model tote_classifier_best.pth --images_dir /path/to/images
 
-    # Sort images into images/empty/ and images/not_empty/unknown/
-    python run_classifier.py --model tote_classifier_best.pth --images_dir images/input/25/ \
+    # Drop new images into images/input/, then sort into empty/ and not_empty/unknown/
+    python run_classifier.py --model tote_classifier_best.pth --images_dir images/input/ \
         --sort_output
 
     # Only flag images with confidence above a threshold

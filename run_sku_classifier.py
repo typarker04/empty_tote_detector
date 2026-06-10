@@ -9,7 +9,7 @@ Usage:
     python run_sku_classifier.py --model sku_classifier_best.pth \
         --images_dir /path/to/images --output_csv predictions.csv
 
-    # Sort images into homogeneous/ and not_homogeneous/ subdirs
+    # Sort images from not_empty/unknown/ into not_empty/homogeneous/ and not_empty/not_homogeneous/
     python run_sku_classifier.py --model sku_classifier_best.pth \
         --images_dir images/not_empty/unknown/ --sort_output
 
@@ -34,7 +34,7 @@ def main():
     parser.add_argument("--images_dir", required=True)
     parser.add_argument("--output_csv", default=None, help="Save predictions CSV here")
     parser.add_argument("--sort_output", action="store_true",
-                        help="Move images into homogeneous/ and not_homogeneous/ subdirs of images_dir")
+                        help="Move images into homogeneous/ and not_homogeneous/ siblings of images_dir")
     parser.add_argument("--threshold", type=float, default=0.5,
                         help="Confidence threshold for 'homogeneous' prediction")
     parser.add_argument("--batch_size", type=int, default=64)
@@ -83,8 +83,9 @@ def main():
     print(f"Saved to {csv_out}")
 
     if args.sort_output:
-        homo_dir = images_dir / "homogeneous"
-        not_homo_dir = images_dir / "not_homogeneous"
+        base = images_dir.parent
+        homo_dir = base / "homogeneous"
+        not_homo_dir = base / "not_homogeneous"
         homo_dir.mkdir(exist_ok=True)
         not_homo_dir.mkdir(exist_ok=True)
         counts = {"homogeneous": 0, "not_homogeneous": 0}

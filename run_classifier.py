@@ -95,7 +95,7 @@ def main():
                         help="Move images into empty/ and not_empty/unknown/ subdirs of --output_base")
     parser.add_argument("--output_base", default="images",
                         help="Base dir for --sort_output (default: images/)")
-    parser.add_argument("--threshold", type=float, default=0.5,
+    parser.add_argument("--threshold", type=float, default=0.4,
                         help="Confidence threshold for 'empty' prediction")
     parser.add_argument("--batch_size", type=int, default=64)
     args = parser.parse_args()

@@ -9,6 +9,12 @@ Usage:
         --filter_csv data/empty_predictions.csv \
         --labels_csv data/sku_labels.csv
 
+    # Show SKU model predictions and auto-label confident ones
+    python label_sku.py --images_dir /path/to/images \
+        --sku_filter_csv data/sku_predictions.csv \
+        --skip_threshold 0.95 \
+        --labels_csv data/sku_labels.csv
+
 Keys:
     h  — homogeneous (all items same SKU)
     x  — heterogeneous (multiple SKU types)
@@ -63,6 +69,15 @@ def load_empty_probs(filter_csv: Path) -> dict:
     return probs
 
 
+def load_sku_predictions(sku_csv: Path) -> dict:
+    """Return filename -> (prediction, homogeneous_prob) from a run_sku_classifier.py CSV."""
+    preds = {}
+    with open(sku_csv) as f:
+        for row in csv.DictReader(f):
+            preds[row["filename"]] = (row.get("prediction", ""), row.get("homogeneous_prob", ""))
+    return preds
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--images_dir", required=True)
@@ -71,6 +86,15 @@ def main():
         "--filter_csv",
         default=None,
         help="Predictions CSV from run_classifier.py — restricts queue to not_empty images",
+    )
+    parser.add_argument(
+        "--sku_filter_csv",
+        default=None,
+        help="Predictions CSV from run_sku_classifier.py — shows model prediction in title",
+    )
+    parser.add_argument(
+        "--skip_threshold", type=float, default=None,
+        help="Auto-label and skip images where SKU model confidence >= this value (e.g. 0.95)",
     )
     args = parser.parse_args()
 
@@ -97,7 +121,40 @@ def main():
         all_images = [p for p in all_images if p.name in not_empty_set]
         print(f"Filtered to {len(all_images)} not_empty images via {args.filter_csv}")
 
+    sku_predictions = {}
+    if args.sku_filter_csv:
+        sku_filter_path = Path(args.sku_filter_csv)
+        if not sku_filter_path.exists():
+            print(f"sku_filter_csv not found: {sku_filter_path}")
+            sys.exit(1)
+        sku_predictions = load_sku_predictions(sku_filter_path)
+
     labels = load_existing_labels(csv_path)
+
+    # Auto-label high-confidence SKU predictions before opening the UI
+    if sku_predictions and args.skip_threshold is not None:
+        auto = 0
+        for p in all_images:
+            if p.name in labels:
+                continue
+            pred, prob_str = sku_predictions.get(p.name, ("", ""))
+            if pred in ("homogeneous", "heterogeneous") and prob_str:
+                try:
+                    prob = float(prob_str)
+                except ValueError:
+                    continue
+                # prob is homogeneous_prob; confidence = max(prob, 1-prob)
+                confidence = prob if pred == "homogeneous" else 1.0 - prob
+                if confidence >= args.skip_threshold:
+                    labels[p.name] = pred
+                    depth_name = p.name.replace("_rgb.png", "_depth.png")
+                    if (images_dir / depth_name).exists():
+                        labels[depth_name] = pred
+                    auto += 1
+        if auto:
+            print(f"Auto-labeled {auto} images with confidence >= {args.skip_threshold}")
+            save_labels(csv_path, labels)
+
     unlabeled = [p for p in all_images if p.name not in labels]
 
     print(f"Total images in queue: {len(all_images)}")
@@ -131,6 +188,9 @@ def main():
         prob_info = ""
         if img_path.name in empty_probs:
             prob_info = f"  |  empty_prob={empty_probs[img_path.name]}"
+        if img_path.name in sku_predictions:
+            pred, homo_prob = sku_predictions[img_path.name]
+            prob_info += f"  |  model: {pred}  (homogeneous_prob={homo_prob})"
         ax.set_title(
             f"{img_path.name}\n{progress}{prob_info}\n"
             "[h]=homogeneous  [x]=heterogeneous  [s]=skip  [u]=undo  [q]=quit",

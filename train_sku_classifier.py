@@ -5,7 +5,7 @@ Usage:
     python train_sku_classifier.py --images_dir /path/to/images --labels_csv sku_labels.csv
 
 Outputs:
-    sku_classifier_best.pth  — best checkpoint by val accuracy
+    models/sku_classifier_best.pth  — best checkpoint by val accuracy
 """
 
 import argparse
@@ -34,7 +34,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--images_dir", required=True)
     parser.add_argument("--labels_csv", default="sku_labels.csv")
-    parser.add_argument("--output", default="sku_classifier_best.pth")
+    parser.add_argument("--output", default="models/sku_classifier_best.pth")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=1e-4)

@@ -11,7 +11,7 @@ Usage:
 
     # Sort images into homogeneous/ and not_homogeneous/ subdirs
     python run_sku_classifier.py --model sku_classifier_best.pth \
-        --images_dir images/not_empty/ --sort_output
+        --images_dir images/not_empty/unknown/ --sort_output
 
     # Only flag images with confidence above a threshold
     python run_sku_classifier.py ... --threshold 0.9

@@ -5,9 +5,9 @@ Usage:
     # Print predictions CSV to stdout
     python run_classifier.py --model tote_classifier_best.pth --images_dir /path/to/images
 
-    # Move empties to a subfolder
-    python run_classifier.py --model tote_classifier_best.pth --images_dir /path/to/images \
-        --move_empty /path/to/empty_output
+    # Sort images into images/empty/ and images/not_empty/unknown/
+    python run_classifier.py --model tote_classifier_best.pth --images_dir images/input/25/ \
+        --sort_output
 
     # Only flag images with confidence above a threshold
     python run_classifier.py ... --threshold 0.9
@@ -91,6 +91,10 @@ def main():
     parser.add_argument("--output_csv", default=None, help="Save predictions CSV here")
     parser.add_argument("--move_empty", default=None,
                         help="If set, move predicted-empty images to this directory")
+    parser.add_argument("--sort_output", action="store_true",
+                        help="Move images into empty/ and not_empty/unknown/ subdirs of --output_base")
+    parser.add_argument("--output_base", default="images",
+                        help="Base dir for --sort_output (default: images/)")
     parser.add_argument("--threshold", type=float, default=0.5,
                         help="Confidence threshold for 'empty' prediction")
     parser.add_argument("--batch_size", type=int, default=64)
@@ -150,6 +154,25 @@ def main():
                     shutil.move(str(depth_src), dest / depth_name)
                 moved += 1
         print(f"Moved {moved} empty-tote image pairs to {dest}")
+
+    if args.sort_output:
+        base = Path(args.output_base)
+        empty_dir = base / "empty"
+        unknown_dir = base / "not_empty" / "unknown"
+        empty_dir.mkdir(parents=True, exist_ok=True)
+        unknown_dir.mkdir(parents=True, exist_ok=True)
+        counts = {"empty": 0, "not_empty": 0}
+        for row in rows:
+            if row["prediction"] not in ("empty", "not_empty"):
+                continue
+            dest = empty_dir if row["prediction"] == "empty" else unknown_dir
+            rgb_name = row["filename"]
+            shutil.move(str(images_dir / rgb_name), dest / rgb_name)
+            depth_name = rgb_name.replace("_rgb.png", "_depth.png")
+            if (images_dir / depth_name).exists():
+                shutil.move(str(images_dir / depth_name), dest / depth_name)
+            counts[row["prediction"]] += 1
+        print(f"Sorted: {counts['empty']} → {empty_dir}/  {counts['not_empty']} → {unknown_dir}/")
 
 
 if __name__ == "__main__":

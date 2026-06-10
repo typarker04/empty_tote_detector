@@ -9,9 +9,9 @@ Usage:
     python run_sku_classifier.py --model sku_classifier_best.pth \
         --images_dir /path/to/images --output_csv predictions.csv
 
-    # Move homogeneous images to a subfolder
+    # Sort images into homogeneous/ and not_homogeneous/ subdirs
     python run_sku_classifier.py --model sku_classifier_best.pth \
-        --images_dir /path/to/images --move_homogeneous /path/to/homogeneous_output
+        --images_dir images/not_empty/unknown/ --sort_output
 
     # Only flag images with confidence above a threshold
     python run_sku_classifier.py ... --threshold 0.9
@@ -33,8 +33,8 @@ def main():
     parser.add_argument("--model", required=True, help="Path to .pth checkpoint")
     parser.add_argument("--images_dir", required=True)
     parser.add_argument("--output_csv", default=None, help="Save predictions CSV here")
-    parser.add_argument("--move_homogeneous", default=None,
-                        help="If set, move predicted-homogeneous images to this directory")
+    parser.add_argument("--sort_output", action="store_true",
+                        help="Move images into homogeneous/ and not_homogeneous/ subdirs of images_dir")
     parser.add_argument("--threshold", type=float, default=0.5,
                         help="Confidence threshold for 'homogeneous' prediction")
     parser.add_argument("--batch_size", type=int, default=64)
@@ -82,20 +82,24 @@ def main():
     print(f"Results: {n_homo}/{len(rows)} predicted homogeneous  (threshold={args.threshold})")
     print(f"Saved to {csv_out}")
 
-    if args.move_homogeneous:
-        dest = Path(args.move_homogeneous)
-        dest.mkdir(parents=True, exist_ok=True)
-        moved = 0
+    if args.sort_output:
+        homo_dir = images_dir / "homogeneous"
+        not_homo_dir = images_dir / "not_homogeneous"
+        homo_dir.mkdir(exist_ok=True)
+        not_homo_dir.mkdir(exist_ok=True)
+        counts = {"homogeneous": 0, "not_homogeneous": 0}
         for row in rows:
-            if row["prediction"] == "homogeneous":
-                rgb_name = row["filename"]
-                depth_name = rgb_name.replace("_rgb.png", "_depth.png")
-                shutil.move(str(images_dir / rgb_name), dest / rgb_name)
-                depth_src = images_dir / depth_name
-                if depth_src.exists():
-                    shutil.move(str(depth_src), dest / depth_name)
-                moved += 1
-        print(f"Moved {moved} homogeneous-tote image pairs to {dest}")
+            if row["prediction"] not in ("homogeneous", "heterogeneous"):
+                continue
+            dest = homo_dir if row["prediction"] == "homogeneous" else not_homo_dir
+            key = row["prediction"] if row["prediction"] == "homogeneous" else "not_homogeneous"
+            rgb_name = row["filename"]
+            shutil.move(str(images_dir / rgb_name), dest / rgb_name)
+            depth_name = rgb_name.replace("_rgb.png", "_depth.png")
+            if (images_dir / depth_name).exists():
+                shutil.move(str(images_dir / depth_name), dest / depth_name)
+            counts[key] += 1
+        print(f"Sorted: {counts['homogeneous']} → homogeneous/  {counts['not_homogeneous']} → not_homogeneous/")
 
 
 if __name__ == "__main__":
